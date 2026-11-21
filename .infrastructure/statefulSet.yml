@@ -68,9 +68,11 @@ spec:
             periodSeconds: 2
             timeoutSeconds: 1
       volumes:
-        - name: config-map
-          configMap:
-            name: mysql
+        - name: data
+          mountPath: /var/lib/mysql
+        - name: mysql-config
+          mountPath: /docker-entrypoint-initdb.d
+          readOnly: true
   volumeClaimTemplates:
     - metadata:
         name: data

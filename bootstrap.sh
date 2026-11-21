@@ -1,10 +1,15 @@
-#!/bin/bash
 #!/usr/bin/env bash
 # Deploys everything needed for the ToDo app + MySQL StatefulSet.
 # Adjust the file names below to match where the manifests live in the repo.
 set -euo pipefail
 
-kubectl config use-context "kind-kind"
+CLUSTER_NAME="kind"
+
+# 1. Cluster
+if ! kind get clusters | grep -qx "$CLUSTER_NAME"; then
+  kind create cluster --name "$CLUSTER_NAME" --config cluster.yml
+fi
+kubectl config use-context "kind-$CLUSTER_NAME"
 
 # 2. MySQL (namespace first, then config/secrets/service, then the StatefulSet)
 kubectl apply -f .infrastructure/mysqlNamespace.yml
