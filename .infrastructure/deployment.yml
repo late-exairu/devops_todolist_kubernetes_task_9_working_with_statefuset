@@ -19,7 +19,8 @@ spec:
     spec:
       containers:
         - name: todoapp
-          image: lateexairu/todoapp:3.0.0
+          image: todoapp:local
+          imagePullPolicy: IfNotPresent
           volumeMounts:
             - name: data
               mountPath: /app/data
@@ -34,7 +35,7 @@ spec:
               memory: "256Mi"
               cpu: "150m"
             limits:
-              memory: "256Mi"
+              memory: "512Mi"
               cpu: "150m"
           env:
             - name: PYTHONUNBUFFERED
@@ -74,17 +75,21 @@ spec:
                   key: HOST
           ports:
             - containerPort: 8080
+          startupProbe:
+            httpGet:
+              path: /api/health/
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 60
           livenessProbe:
             httpGet:
-              path: api/health
+              path: /api/health/
               port: 8080
-            initialDelaySeconds: 60
             periodSeconds: 5
           readinessProbe:
             httpGet:
-              path: api/ready
+              path: /api/ready/
               port: 8080
-            initialDelaySeconds: 5
             periodSeconds: 5
       volumes:
         - name: data

@@ -1,78 +1,111 @@
-# Validation instructions
+# Kubernetes deployment and validation
 
-## 1. Deploy
+This project runs a Django ToDo application and MySQL in a local `kind`
+cluster. MySQL runs as a three-replica StatefulSet in the `mysql` namespace.
+The application in the `todoapp` namespace connects to `mysql-0`.
+
+## Requirements
+
+- Docker
+- `kind`
+- `kubectl`
+- At least 3 GB of memory available to Docker
+
+## Deploy
+
+From the repository root, run:
 
 ```bash
 chmod +x bootstrap.sh
 ./bootstrap.sh
 ```
 
-## 2. Validate the MySQL StatefulSet
+The script creates the `kind` cluster if needed, builds and loads the
+application image, creates the MySQL ConfigMap from
+`.infrastructure/init.sql`, and deploys MySQL and the application.
+
+The credentials in the Secret manifests are for this local exercise only.
+Do not reuse them outside this project.
+
+## Validate MySQL
 
 ```bash
-# 3 pods: mysql-0, mysql-1, mysql-2, all Running and 1/1 Ready
 kubectl get pods -n mysql
-
-# StatefulSet is 3/3
-kubectl get statefulset -n mysql
-
-# Headless service (CLUSTER-IP must be None)
-kubectl get svc -n mysql
-
-# One PVC per pod: data-mysql-0, data-mysql-1, data-mysql-2
-kubectl get pvc -n mysql
-
-# Secrets are injected (names only, values are not printed here)
+kubectl get statefulset,service,pvc -n mysql
 kubectl get secret mysql-secrets -n mysql
-
-# Probes and resources are set
-kubectl describe pod mysql-0 -n mysql | grep -E "Liveness|Readiness|Limits|Requests" -A2
 ```
 
-## 3. Validate init.sql ran
+Expected:
+
+- `mysql-0`, `mysql-1`, and `mysql-2` are Running and Ready.
+- StatefulSet `mysql` is `3/3`.
+- Service `mysql` has `CLUSTER-IP` set to `None` (headless).
+- PVCs `data-mysql-0`, `data-mysql-1`, and `data-mysql-2` are Bound.
+
+Check that `init.sql` created the database table:
 
 ```bash
-kubectl exec -n mysql mysql-0 -- mysql -uapp_user -p1234 app_db -e "SHOW TABLES;"
+kubectl exec -n mysql mysql-0 -- \
+  mysql -uapp_user -p1234 app_db -e "SHOW TABLES;"
 ```
 
-Expected output contains the `counter` table.
+Expected output includes the `counter` table.
 
-## 4. Validate the headless service DNS (mysql-0)
+## Validate the application
 
 ```bash
-kubectl run -it --rm dns-test --image=busybox:1.36 --restart=Never -n todoapp -- \
-  nslookup mysql-0.mysql.mysql.svc.cluster.local
+kubectl get pods,service -n todoapp
+kubectl logs -n todoapp deployment/todoapp
 ```
 
-## 5. Validate the application
+Confirm Django is using MySQL and can connect:
 
 ```bash
-kubectl get pods -n todoapp
-kubectl logs -n todoapp deploy/todoapp
-
-# Env vars come from the Secret (NAME, USER, PASSWORD, HOST)
-kubectl exec -n todoapp deploy/todoapp -- printenv HOST NAME USER
-
-kubectl port-forward -n todoapp deploy/todoapp 8080:8080
-# in another terminal:
-curl -i http://localhost:8080/api/health
-curl -i http://localhost:8080/api/ready
+kubectl exec -n todoapp deployment/todoapp -- \
+  python manage.py shell -c \
+  'from django.db import connection; connection.ensure_connection(); print(connection.vendor)'
 ```
 
-Open http://localhost:8080 and use the app; the counter is stored in `mysql-0`.
+Expected output: `mysql`.
 
-## 6. Validate persistence
+Check migrations:
 
 ```bash
-kubectl delete pod mysql-0 -n mysql
-kubectl wait --for=condition=Ready pod/mysql-0 -n mysql --timeout=300s
-kubectl exec -n mysql mysql-0 -- mysql -uapp_user -p1234 app_db -e "SELECT * FROM counter;"
+kubectl exec -n todoapp deployment/todoapp -- python manage.py showmigrations
 ```
 
-Data is still there after the pod is recreated.
-
-## 7. Cleanup
+The application is exposed on the kind NodePort configured in `cluster.yml`:
 
 ```bash
-kind delete cluster --name todoapp
+curl -i http://localhost:30007/
+```
+
+Probe endpoints can be checked inside the Pod:
+
+```bash
+kubectl exec -n todoapp deployment/todoapp -- \
+  python -c "from urllib.request import urlopen; print(urlopen('http://127.0.0.1:8080/api/health/').status)"
+kubectl exec -n todoapp deployment/todoapp -- \
+  python -c "from urllib.request import urlopen; print(urlopen('http://127.0.0.1:8080/api/ready/').status)"
+```
+
+Both should return `200` after startup.
+
+## Troubleshooting
+
+```bash
+kubectl describe pod -n mysql mysql-0
+kubectl logs -n mysql mysql-0
+kubectl describe pod -n todoapp -l app=todoapp
+kubectl logs -n todoapp deployment/todoapp
+```
+
+Rerun `./bootstrap.sh` after changing manifests or application code.
+
+## Cleanup
+
+This deletes the local cluster and all data stored in it:
+
+```bash
+kind delete cluster --name kind
 ```
